@@ -9,10 +9,18 @@ use Illuminate\Support\Facades\DB;
 
 class ItemController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $items = Item::with('histories')->get();
-        return view('items.index', compact('items'));
+        $search = $request->input('search');
+
+        $items = Item::with('histories')
+            ->when($search, function ($query, $search) {
+                return $query->where('nama_barang', 'like', "%{$search}%")
+                    ->orWhere('satuan', 'like', "%{$search}%");
+            })
+            ->get();
+
+        return view('items.index', compact('items', 'search'));
     }
 
     public function create()
