@@ -83,6 +83,7 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('/items/{item}', [ItemController::class, 'destroy'])->name('items.destroy');
 });
 
+
 // Routes khusus leader - edit dan update
 Route::middleware(['auth', 'role:leader'])->group(function () {
     Route::get('/items/{item}/edit', [ItemController::class, 'edit'])->name('items.edit');
@@ -99,8 +100,25 @@ Route::middleware('auth')->group(function () {
 // Routes untuk semua user (leader & staff)
 Route::resource('items', ItemController::class)->only(['index', 'create', 'store', 'destroy']);
 
-// TAMBAHKAN INI (setelah items routes):
-Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
-Route::post('/reports/regenerate', [ReportController::class, 'regenerate'])->name('reports.regenerate');
+Route::middleware(['auth'])->group(function () {
+
+    // Item Routes (yang sudah ada)
+    Route::resource('items', ItemController::class);
+
+    // Report Routes (UPDATE INI)
+    Route::prefix('reports')->name('reports.')->group(function () {
+        // Laporan Bulanan (halaman utama)
+        Route::get('/', [ReportController::class, 'monthly'])->name('monthly');
+
+        // Laporan Mingguan dengan detail transaksi
+        Route::get('/weekly/{item}', [ReportController::class, 'weekly'])->name('weekly');
+
+        // Regenerate laporan
+        Route::post('/regenerate', [ReportController::class, 'regenerate'])->name('regenerate');
+
+        // Legacy route (untuk backward compatibility jika ada link lama)
+        Route::get('/index', [ReportController::class, 'index'])->name('index');
+    });
+});
 
 require __DIR__ . '/auth.php';
