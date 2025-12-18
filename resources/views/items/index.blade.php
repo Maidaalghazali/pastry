@@ -8,7 +8,6 @@
     <div class="py-12">
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
 
-
             <!-- Search Bar & Tombol Tambah -->
             <div class="mb-6 flex flex-col md:flex-row gap-4 justify-between items-center">
                 <!-- Search Form -->
@@ -74,49 +73,51 @@
                         <table class="min-w-full divide-y divide-gray-200">
                             <thead class="bg-gray-50">
                                 <tr>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         No</th>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Nama Barang</th>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Satuan</th>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Stok Awal</th>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Penambahan</th>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Pengurangan</th>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Stok Akhir</th>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Aksi</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
                                 @forelse($items as $item)
-                                    <tr>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $loop->iteration }}
+                                    <tr class="{{ $item->stok_akhir <= $item->stok_minimum ? 'bg-red-50 border-l-4 border-red-500' : '' }}">
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                            {{ $loop->iteration }}
                                         </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                            {{ $item->nama_barang }}</td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $item->satuan }}
+                                            {{ $item->nama_barang }}
+                                            @if($item->stok_akhir <= $item->stok_minimum)
+                                                <span class="ml-2 text-red-600 font-bold">⚠️</span>
+                                            @endif
                                         </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                            {{ $item->stok_awal }}</td>
+                                            {{ $item->satuan }}
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                            {{ $item->stok_awal }}
+                                        </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600">
-                                            +{{ $item->penambahan }}</td>
+                                            +{{ $item->total_penambahan }}
+                                        </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600">
-                                            -{{ $item->pengurangan }}</td>
-                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
-                                            {{ $item->stok_akhir }}</td>
+                                            -{{ $item->total_pengurangan }}
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm font-bold {{ $item->stok_akhir <= $item->stok_minimum ? 'text-red-600' : 'text-gray-900' }}">
+                                            {{ $item->stok_akhir }}
+                                        </td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                                             <div class="flex space-x-2">
                                                 <a href="{{ route('items.edit', $item) }}"
@@ -133,7 +134,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="8" class="px-6 py-4 text-center text-sm text-gray-500">
+                                        <td colspan="9" class="px-6 py-4 text-center text-sm text-gray-500">
                                             @if ($search ?? false)
                                                 <div class="py-4">
                                                     <p class="text-gray-600 mb-2">Tidak ada barang yang cocok dengan

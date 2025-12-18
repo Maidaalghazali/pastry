@@ -22,7 +22,7 @@ class ItemHistory extends Model
         return $this->belongsTo(Item::class);
     }
 
-    public function creator(): BelongsTo
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }

@@ -10,160 +10,243 @@ use Carbon\Carbon;
 
 class ReportController extends Controller
 {
-    // Halaman utama laporan
-    public function index(Request $request)
+    /**
+     * =========================
+     * MONTHLY REPORT (REKAP)
+     * =========================
+     */
+    public function monthly(Request $request)
     {
-        $year = $request->input('year', now()->year);
-        $month = $request->input('month', now()->month);
-        $item_id = $request->input('item_id');
+        $year  = (int) $request->input('year', now()->year);
+        $month = (int) $request->input('month', now()->month);
 
-        // Get all items untuk dropdown
-        $items = Item::orderBy('nama_barang')->get();
+        // generate data (AMAN)
+        $this->generateWeeklyReports($year, $month);
 
-        // Generate weekly reports jika belum ada
-        $this->generateWeeklyReports($year, $month, $item_id);
-
-        // Get weekly reports
-        $query = WeeklyReport::with('item')
+        $weeklyReports = WeeklyReport::with('item')
             ->where('year', $year)
-            ->where('month', $month);
-
-        if ($item_id) {
-            $query->where('item_id', $item_id);
-        }
-
-        $weeklyReports = $query->orderBy('item_id')
+            ->where('month', $month)
+            ->orderBy('item_id')
             ->orderBy('week')
             ->get();
 
-        // Group by item
-        $reportsByItem = $weeklyReports->groupBy('item_id');
-
-        // Calculate monthly summary
         $monthlySummary = $this->calculateMonthlySummary($weeklyReports);
 
-        return view('reports.index', compact(
-            'reportsByItem',
+        // ✅ SORTING: Low stock first, then ascending by stok_akhir_bulan
+        usort($monthlySummary, function ($a, $b) {
+            // Prioritas 1: Barang dengan stok <= minimum di atas
+            $aIsLow = $a['item']->stok_akhir <= $a['item']->stok_minimum ? 0 : 1;
+            $bIsLow = $b['item']->stok_akhir <= $b['item']->stok_minimum ? 0 : 1;
+
+            if ($aIsLow !== $bIsLow) {
+                return $aIsLow <=> $bIsLow;
+            }
+
+            // Prioritas 2: Urutkan berdasarkan stok_akhir_bulan (ascending)
+            if ($a['stok_akhir_bulan'] !== $b['stok_akhir_bulan']) {
+                return $a['stok_akhir_bulan'] <=> $b['stok_akhir_bulan'];
+            }
+
+            // Prioritas 3: Urutkan berdasarkan nama_barang (A-Z)
+            return strcasecmp($a['item']->nama_barang, $b['item']->nama_barang);
+        });
+
+        return view('reports.monthly', compact(
             'monthlySummary',
-            'items',
             'year',
-            'month',
-            'item_id'
+            'month'
         ));
     }
 
-    // Generate weekly reports
-    private function generateWeeklyReports($year, $month, $item_id = null)
+    /**
+     * =========================
+     * WEEKLY REPORT (DETAIL)
+     * =========================
+     */
+    public function weekly(Request $request, Item $item)
+    {
+        $year  = (int) $request->input('year', now()->year);
+        $month = (int) $request->input('month', now()->month);
+
+        $this->generateWeeklyReports($year, $month, $item->id);
+
+        $weeklyReports = WeeklyReport::where('item_id', $item->id)
+            ->where('year', $year)
+            ->where('month', $month)
+            ->orderBy('week')
+            ->get();
+
+        $weeklyDetails = [];
+
+        foreach ($weeklyReports as $report) {
+            $transactions = ItemHistory::where('item_id', $item->id)
+                ->whereBetween('created_at', [
+                    $report->start_date->startOfDay(),
+                    $report->end_date->endOfDay()
+                ])
+                ->orderBy('created_at')
+                ->get();
+
+            $weeklyDetails[] = [
+                'report' => $report,
+                'transactions' => $transactions
+            ];
+        }
+
+        return view('reports.weekly', compact(
+            'item',
+            'weeklyDetails',
+            'year',
+            'month'
+        ));
+    }
+
+    /**
+     * =========================
+     * ENGINE WEEKLY REPORT
+     * =========================
+     */
+    private function generateWeeklyReports(int $year, int $month, ?int $item_id = null): void
     {
         $startOfMonth = Carbon::create($year, $month, 1)->startOfDay();
-        $endOfMonth = $startOfMonth->copy()->endOfMonth();
+        $endOfMonth   = $startOfMonth->copy()->endOfMonth();
 
-        // Get items
         $items = $item_id
             ? Item::where('id', $item_id)->get()
             : Item::all();
 
         foreach ($items as $item) {
+
             $currentDate = $startOfMonth->copy();
-            $weekNumber = 1;
-            $previousWeekStokAkhir = null;
+            $weekNumber  = 1;
+            $prevStok    = null;
 
             while ($currentDate <= $endOfMonth) {
-                // Calculate week start (Monday) and end (Sunday)
-                $weekStart = $currentDate->copy()->startOfWeek(Carbon::MONDAY);
-                $weekEnd = $currentDate->copy()->endOfWeek(Carbon::SUNDAY);
 
-                // Adjust untuk bulan ini saja
-                if ($weekStart->month < $month) {
+                // ✅ WEEK START & END (CARBON AMAN)
+                $weekStart = $currentDate->copy()->startOfWeek(Carbon::MONDAY);
+                if ($weekStart->lt($startOfMonth)) {
                     $weekStart = $startOfMonth->copy();
                 }
-                if ($weekEnd->month > $month || $weekEnd > $endOfMonth) {
+
+                $weekEnd = $currentDate->copy()->endOfWeek(Carbon::SUNDAY);
+                if ($weekEnd->gt($endOfMonth)) {
                     $weekEnd = $endOfMonth->copy();
                 }
 
-                // Check if report already exists
-                $existingReport = WeeklyReport::where('item_id', $item->id)
-                    ->where('year', $year)
-                    ->where('month', $month)
-                    ->where('week', $weekNumber)
-                    ->first();
+                $exists = WeeklyReport::where([
+                    'item_id' => $item->id,
+                    'year'    => $year,
+                    'month'   => $month,
+                    'week'    => $weekNumber,
+                ])->exists();
 
-                if (!$existingReport) {
-                    // Calculate stok awal
-                    if ($previousWeekStokAkhir !== null) {
-                        $stokAwal = $previousWeekStokAkhir;
+                if (!$exists) {
+
+                    // ✅ STOK AWAL
+                    if ($prevStok !== null) {
+                        $stokAwal = $prevStok;
                     } else {
-                        // Minggu pertama: ambil stok akhir dari akhir bulan sebelumnya
                         $stokAwal = $this->getStokAwalMingguPertama($item->id, $weekStart);
                     }
 
-                    // Calculate transactions in this week
-                    $transactions = ItemHistory::where('item_id', $item->id)
-                        ->whereBetween('created_at', [$weekStart, $weekEnd->endOfDay()])
+                    // ✅ TRANSAKSI MINGGUAN
+                    $trx = ItemHistory::where('item_id', $item->id)
+                        ->whereBetween('created_at', [
+                            $weekStart->copy()->startOfDay(),
+                            $weekEnd->copy()->endOfDay()
+                        ])
                         ->get();
 
-                    $totalPenambahan = $transactions->where('type', 'penambahan')->sum('jumlah');
-                    $totalPengurangan = $transactions->where('type', 'pengurangan')->sum('jumlah');
-                    $stokAkhir = $stokAwal + $totalPenambahan - $totalPengurangan;
+                    $in  = $trx->where('type', 'penambahan')->sum('jumlah');
+                    $out = $trx->where('type', 'pengurangan')->sum('jumlah');
 
-                    // Create report
+                    $stokAkhir = $stokAwal + $in - $out;
+
                     WeeklyReport::create([
-                        'item_id' => $item->id,
-                        'year' => $year,
-                        'month' => $month,
-                        'week' => $weekNumber,
-                        'start_date' => $weekStart,
-                        'end_date' => $weekEnd,
-                        'stok_awal' => $stokAwal,
-                        'total_penambahan' => $totalPenambahan,
-                        'total_pengurangan' => $totalPengurangan,
-                        'stok_akhir' => $stokAkhir,
+                        'item_id'           => $item->id,
+                        'year'              => $year,
+                        'month'             => $month,
+                        'week'              => $weekNumber,
+                        'start_date'        => $weekStart,
+                        'end_date'          => $weekEnd,
+                        'stok_awal'         => $stokAwal,
+                        'total_penambahan'  => $in,
+                        'total_pengurangan' => $out,
+                        'stok_akhir'        => $stokAkhir,
                     ]);
 
-                    $previousWeekStokAkhir = $stokAkhir;
+                    $prevStok = $stokAkhir;
                 } else {
-                    $previousWeekStokAkhir = $existingReport->stok_akhir;
+                    $prevStok = WeeklyReport::where([
+                        'item_id' => $item->id,
+                        'year'    => $year,
+                        'month'   => $month,
+                        'week'    => $weekNumber,
+                    ])->value('stok_akhir');
                 }
 
-                // Move to next week
                 $currentDate = $weekEnd->copy()->addDay();
                 $weekNumber++;
             }
         }
     }
 
-    // Get stok awal minggu pertama dari bulan sebelumnya
-    private function getStokAwalMingguPertama($item_id, $weekStart)
+    /**
+     * Legacy method - redirect to monthly
+     */
+    public function index(Request $request)
     {
-        // Cari report minggu terakhir bulan sebelumnya
+        return $this->monthly($request);
+    }
+
+    /**
+     * Get stok awal untuk minggu pertama
+     */
+    private function getStokAwalMingguPertama(int $item_id, Carbon $weekStart): int
+    {
         $previousMonth = $weekStart->copy()->subMonth();
 
         $lastWeekPreviousMonth = WeeklyReport::where('item_id', $item_id)
             ->where('year', $previousMonth->year)
             ->where('month', $previousMonth->month)
-            ->orderBy('week', 'desc')
+            ->orderByDesc('week')
             ->first();
 
-        if ($lastWeekPreviousMonth) {
-            return $lastWeekPreviousMonth->stok_akhir;
-        }
-
-        // Jika tidak ada, ambil stok_awal dari item
-        $item = Item::find($item_id);
-        return $item->stok_awal ?? 0;
+        return $lastWeekPreviousMonth?->stok_akhir
+            ?? Item::find($item_id)?->stok_awal
+            ?? 0;
     }
 
-    // Calculate monthly summary
-    private function calculateMonthlySummary($weeklyReports)
+    /**
+     * Calculate monthly summary with proper stok_awal_bulan
+     */
+    private function calculateMonthlySummary($weeklyReports): array
     {
         $summary = [];
 
         foreach ($weeklyReports->groupBy('item_id') as $item_id => $reports) {
-            $item = $reports->first()->item;
+            $firstReport = $reports->first();
 
-            $summary[$item_id] = [
-                'item' => $item,
-                'stok_awal_bulan' => $reports->first()->stok_awal,
+            // ✅ Ambil stok akhir dari bulan sebelumnya
+            $previousMonth = Carbon::create($firstReport->year, $firstReport->month, 1)->subMonth();
+
+            $lastWeekPreviousMonth = WeeklyReport::where('item_id', $item_id)
+                ->where('year', $previousMonth->year)
+                ->where('month', $previousMonth->month)
+                ->orderByDesc('week')
+                ->first();
+
+            // Jika ada data bulan sebelumnya, ambil stok_akhir nya
+            // Jika tidak ada (bulan pertama), ambil dari items.stok_awal
+            $stokAwalBulan = $lastWeekPreviousMonth?->stok_akhir
+                ?? Item::find($item_id)?->stok_awal
+                ?? 0;
+
+            $summary[] = [ // ✅ Ubah dari array associative ke indexed array
+                'item' => $firstReport->item,
+                'item_id' => $item_id, // ✅ Tambahkan ini untuk link ke weekly
+                'stok_awal_bulan' => $stokAwalBulan,
                 'total_penambahan' => $reports->sum('total_penambahan'),
                 'total_pengurangan' => $reports->sum('total_pengurangan'),
                 'stok_akhir_bulan' => $reports->last()->stok_akhir,
@@ -173,29 +256,23 @@ class ReportController extends Controller
         return $summary;
     }
 
-    // Regenerate reports (untuk refresh data)
+    /**
+     * Regenerate reports
+     */
     public function regenerate(Request $request)
     {
-        $year = $request->input('year', now()->year);
-        $month = $request->input('month', now()->month);
-        $item_id = $request->input('item_id');
+        $year  = $request->integer('year');
+        $month = $request->integer('month');
 
-        // Delete existing reports
-        $query = WeeklyReport::where('year', $year)->where('month', $month);
+        $deleted = WeeklyReport::where('year', $year)
+            ->where('month', $month)
+            ->delete();
 
-        if ($item_id) {
-            $query->where('item_id', $item_id);
-        }
+        $this->generateWeeklyReports($year, $month);
 
-        $query->delete();
-
-        // Regenerate
-        $this->generateWeeklyReports($year, $month, $item_id);
-
-        return redirect()->route('reports.index', [
+        return redirect()->route('reports.monthly', [
             'year' => $year,
-            'month' => $month,
-            'item_id' => $item_id
-        ])->with('success', 'Laporan berhasil di-generate ulang!');
+            'month' => $month
+        ])->with('success', "Laporan berhasil di-generate ulang! ({$deleted} data lama dihapus)");
     }
 }

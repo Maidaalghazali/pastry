@@ -16,6 +16,7 @@ class Item extends Model
         'satuan',
         'stok_awal',
         'stok_akhir',
+        'stok_minimum', // Tambahkan ini
         'created_by',
     ];
 
@@ -37,5 +38,9 @@ class Item extends Model
     public function getPenguranganAttribute()
     {
         return $this->histories()->where('type', 'pengurangan')->sum('jumlah');
+    }
+    public function isLowStock()
+    {
+        return $this->stok_akhir <= $this->stok_minimum;
     }
 }
